@@ -2,20 +2,54 @@ import streamlit as st
 import psycopg2
 from datetime import datetime
 import pandas as pd
-# from dotenv import load_dotenv
-# import os
+import hashlib
 
-# load_dotenv()
+# Initialize session state for authentication
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+
 DATABASE_URL = {
-        'dbname': st.secrets["database"]["DB_NAME"],
-        'user': st.secrets["database"]["DB_USER"],
-        'password': st.secrets["database"]["DB_PASSWORD"],
-        'host': st.secrets["database"]["DB_HOST"],
-        'port': st.secrets["database"]["DB_PORT"]
-    }
+    'dbname': st.secrets["database"]["DB_NAME"],
+    'user': st.secrets["database"]["DB_USER"],
+    'password': st.secrets["database"]["DB_PASSWORD"],
+    'host': st.secrets["database"]["DB_HOST"],
+    'port': st.secrets["database"]["DB_PORT"]
+}
 
 def get_db_connection():
     return psycopg2.connect(**DATABASE_URL)
+
+def verify_user(username, password):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+        cur.execute("""
+            SELECT 1 FROM app_users 
+            WHERE username = %s AND password_hash = %s
+        """, (username, password_hash))
+        result = cur.fetchone()
+        return result is not None
+    except Exception as e:
+        st.error(f"Database error: {e}")
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+def login_page():
+    st.title("Login")
+    
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    
+    if st.button("Login"):
+        if verify_user(username, password):
+            st.session_state.authenticated = True
+            st.success("Login successful!")
+            st.rerun()
+        else:
+            st.error("Invalid username or password")
 
 def get_current_instructions():
     conn = get_db_connection()
@@ -78,6 +112,16 @@ def update_instruction(instruction_id, new_name, new_instruction):
     conn.close()
 
 def Amy_Instructions():
+    if not st.session_state.authenticated:
+        login_page()
+        return
+    
+    # Add logout button in the sidebar
+    with st.sidebar:
+        if st.button("Logout"):
+            st.session_state.authenticated = False
+            st.rerun()
+    
     st.title("Agent Instructions Management")
     
     instructions = get_current_instructions()
