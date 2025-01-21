@@ -3,6 +3,7 @@ import psycopg2
 from datetime import datetime
 import pandas as pd
 import hashlib
+import sys
 
 # Initialize session state for authentication
 if 'authenticated' not in st.session_state:
@@ -18,6 +19,9 @@ DATABASE_URL = {
 
 def get_db_connection():
     return psycopg2.connect(**DATABASE_URL)
+
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
 def verify_user(username, password):
     conn = get_db_connection()
@@ -37,19 +41,24 @@ def verify_user(username, password):
         cur.close()
         conn.close()
 
-def login_page():
-    st.title("Login")
-    
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    
-    if st.button("Login"):
-        if verify_user(username, password):
-            st.session_state.authenticated = True
-            st.success("Login successful!")
-            st.rerun()
-        else:
-            st.error("Invalid username or password")
+def add_user(username, password):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        password_hash = hash_password(password)
+        cur.execute("""
+            INSERT INTO app_users (username, password_hash)
+            VALUES (%s, %s);
+        """, (username, password_hash))
+        conn.commit()
+        st.success(f"User '{username}' added successfully!")
+    except psycopg2.IntegrityError:
+        st.error(f"Error: Username '{username}' already exists!")
+    except psycopg2.Error as e:
+        st.error(f"Error adding user: {e}")
+    finally:
+        cur.close()
+        conn.close()
 
 def get_current_instructions():
     conn = get_db_connection()
@@ -111,6 +120,38 @@ def update_instruction(instruction_id, new_name, new_instruction):
     cur.close()
     conn.close()
 
+
+def user_management_page():
+    st.header("Add New User")
+    
+    username = st.text_input("Username (minimum 3 characters)")
+    password = st.text_input("Password (minimum 6 characters)", type="password")
+    confirm_password = st.text_input("Confirm Password", type="password")
+    
+    if st.button("Add User"):
+        if len(username) < 3:
+            st.error("Username must be at least 3 characters long!")
+        elif len(password) < 6:
+            st.error("Password must be at least 6 characters long!")
+        elif password != confirm_password:
+            st.error("Passwords do not match!")
+        else:
+            add_user(username, password)
+
+def login_page():
+    st.title("Login")
+    
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    
+    if st.button("Login"):
+        if verify_user(username, password):
+            st.session_state.authenticated = True
+            st.success("Login successful!")
+            st.rerun()
+        else:
+            st.error("Invalid username or password")
+
 def Amy_Instructions():
     if not st.session_state.authenticated:
         login_page()
@@ -124,13 +165,11 @@ def Amy_Instructions():
     
     st.title("Agent Instructions Management")
     
-    instructions = get_current_instructions()
-    
-    st.header("Current Instructions")
-    
-    tab1, tab2 = st.tabs(["Current Instructions", "History"])
+    # Create tabs for Instructions, History, and User Management
+    tab1, tab2, tab3 = st.tabs(["Current Instructions", "History", "User Management"])
     
     with tab1:
+        instructions = get_current_instructions()
         for inst in instructions:
             instruction_id, name, text, created_at = inst
             
@@ -159,6 +198,7 @@ def Amy_Instructions():
             st.markdown("---")
     
     with tab2:
+        instructions = get_current_instructions()
         agent_names = {inst[0]: inst[1] for inst in instructions}
         selected_agent = st.selectbox(
             "Select Agent to View History",
@@ -189,6 +229,9 @@ def Amy_Instructions():
                     st.markdown("---")
             else:
                 st.info("No previous versions found for this agent")
+    
+    with tab3:
+        user_management_page()
 
 if __name__ == "__main__":
     Amy_Instructions()
